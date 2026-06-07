@@ -26,6 +26,11 @@
  OTHER DEALINGS IN THE SOFTWARE.
 */
 
+// IME globals — must be outside window.onload so all functions can see them
+var imeProxy = null;
+var isComposing = false;
+var compositionString = '';
+
 function Node(x, y) {
 	this.x = x;
 	this.y = y;
@@ -742,12 +747,21 @@ function drawArrow(c, x, y, angle) {
 }
 
 function canvasHasFocus() {
-	return (document.activeElement || document.body) == document.body;
+	return (document.activeElement || document.body) == document.body ||
+            document.activeElement == imeProxy;
 }
 
 function drawText(c, text, x, y, angleOrNull, isSelected) {
 	c.font = '20px "Times New Roman", serif';
-	var width = c.measureText(text).width;
+
+	var displayText = text;
+    if (isSelected && isComposing && compositionString) {
+        displayText = text.substring(0, caretIndex) 
+                    + compositionString 
+                    + text.substring(caretIndex);
+    }
+
+	var width = c.measureText(displayText).width;
 
 	// center the text
 	x -= width / 2;
@@ -766,15 +780,41 @@ function drawText(c, text, x, y, angleOrNull, isSelected) {
 	// draw text and caret (round the coordinates so the caret falls on a pixel)
 	x = Math.round(x);
 	y = Math.round(y);
-	c.fillText(text, x, y + 6);
-	if(isSelected && caretVisible && canvasHasFocus() && document.hasFocus()) {
-		var textBeforeCaretWidth = c.measureText(text.substring(0, caretIndex)).width;
-		x += textBeforeCaretWidth;
-		c.beginPath();
-		c.moveTo(x, y - 10);
-		c.lineTo(x, y + 10);
-		c.stroke();
-	}
+	c.fillText(displayText, x, y + 6);
+
+	if (isSelected && isComposing && compositionString) {
+        var preWidth  = c.measureText(text.substring(0, caretIndex)).width;
+        var compWidth = c.measureText(compositionString).width;
+        c.beginPath();
+        c.moveTo(x + preWidth,             y + 9);
+        c.lineTo(x + preWidth + compWidth, y + 9);
+        c.lineWidth = 1;
+        c.stroke();
+    }
+
+    // 游標位置（不論閃爍狀態都要算，用來定位 imeProxy）
+    if (isSelected && canvasHasFocus() && document.hasFocus()) {
+        var caretPos = isComposing
+            ? c.measureText(displayText.substring(0, caretIndex + compositionString.length)).width
+            : c.measureText(text.substring(0, caretIndex)).width;
+        var caretX = x + caretPos;
+        var caretY = y;
+
+        // 把 imeProxy 移到游標的螢幕座標，讓輸入法在正確位置彈出
+        if (imeProxy) {
+            var rect = canvas.getBoundingClientRect();
+			imeProxy.style.left = (rect.left + window.scrollX + caretX) + 'px';
+    		imeProxy.style.top  = (rect.top + window.scrollY + caretY - 10) + 'px';
+        }
+
+        // 游標閃爍
+        if (caretVisible) {
+            c.beginPath();
+            c.moveTo(caretX, caretY - 10);
+            c.lineTo(caretX, caretY + 10);
+            c.stroke();
+        }
+    }
 }
 
 var caretTimer;
@@ -863,7 +903,56 @@ function snapNode(node) {
 	}
 }
 
+window.addEventListener('blur', function() {
+    shift = false;
+});
+
 window.onload = function() {
+	imeProxy = document.getElementById('imeProxy');
+
+	imeProxy.addEventListener('compositionstart', function() {
+		isComposing = true;
+	});
+
+	imeProxy.addEventListener('compositionend', function(e) {
+		isComposing = false;
+		compositionString = '';
+		// e.data 是最終確定的中文字
+		if (selectedObject && 'text' in selectedObject) {
+			selectedObject.text = 
+				selectedObject.text.substring(0, caretIndex) + 
+				e.data + 
+				selectedObject.text.substring(caretIndex);
+			caretIndex += e.data.length;
+			imeProxy.value = ''; // 清空代理 input
+			draw();
+		}
+	});
+
+	imeProxy.addEventListener('compositionupdate', function(e) {
+		compositionString = e.data; // 例如正在打 "ㄓㄨㄥ" 或 "zhong"
+		draw();
+	});
+
+	imeProxy.addEventListener('input', function(e) {
+		if (!isComposing && e.data && selectedObject && 'text' in selectedObject) {
+			var newText = selectedObject.text.substring(0, caretIndex) +
+						e.data +
+						selectedObject.text.substring(caretIndex);
+			caretIndex += e.data.length;
+
+			// 保留原本的 LaTeX 快捷鍵功能
+			var formattedText = convertLatexShortcuts(newText);
+			caretIndex -= newText.length - formattedText.length;
+
+			selectedObject.text = formattedText;
+			imeProxy.value = ''; // 清空，避免字元累積
+			resetCaret();
+			draw();
+			updateStates();
+		}
+	});
+
 	canvas = document.getElementById('canvas');
 	canvasWidthInput = document.getElementById("canvasWidth");
 	canvasHeightInput = document.getElementById("canvasHeight");
@@ -884,6 +973,7 @@ window.onload = function() {
 
 	canvas.onmousedown = function(e) {
 		var mouse = crossBrowserRelativeMousePos(e);
+		shift = e.shiftKey;
 		selectedObject = selectObject(mouse.x, mouse.y);
 		movingObject = false;
 		originalClick = mouse;
@@ -935,6 +1025,8 @@ window.onload = function() {
 		}
 
 		caretIndex = selectedObject.text.length;
+		imeProxy.value = '';
+		imeProxy.focus();
 		updateStates();
 	};
 
@@ -944,6 +1036,12 @@ window.onload = function() {
 	canvas.onmousemove = function(e) {
 		prevMouse = mouse;
 		mouse = crossBrowserRelativeMousePos(e);
+
+		if (currentLink != null && !shift && (currentLink instanceof TemporaryLink || currentLink instanceof SelfLink)) {
+			currentLink = null;
+			draw();
+			return;
+		}
 
 		if(currentLink != null) {
 			var targetNode = selectObject(mouse.x, mouse.y);
@@ -1002,6 +1100,13 @@ window.onload = function() {
 			currentLink = null;
 			draw();
 		}
+		
+		if(selectedObject != null && 'text' in selectedObject) {
+			imeProxy.value = '';
+			imeProxy.focus();
+		} else {
+			imeProxy.blur();
+		}
 
 		updateStates();
 	};
@@ -1018,6 +1123,7 @@ document.onkeydown = function(e) {
 		// don't read keystrokes when other things have focus
 		return true;
 	} else if(key == 8) { // backspace key
+        if(document.activeElement === imeProxy) e.preventDefault();
 		if(selectedObject != null && 'text' in selectedObject) {
 			// Remove the character before the caret
 			var textBeforeCaret = selectedObject.text.substring(0, caretIndex - 1);
@@ -1062,6 +1168,11 @@ document.onkeyup = function(e) {
 	if(key === 16) {
 		shift = false;
 	}
+	
+	if(isComposing) {
+        updateStates();
+        return;
+    }
 
 	// Left arrow key
 	if(key === 37){
@@ -1096,6 +1207,7 @@ document.onkeyup = function(e) {
 };
 
 document.onkeypress = function(e) {
+	if (document.activeElement == imeProxy) return; // 交給 imeProxy 處理
 	// don't read keystrokes when other things have focus
 	var key = crossBrowserKey(e);
 	if(!canvasHasFocus()) {

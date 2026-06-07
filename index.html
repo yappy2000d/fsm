@@ -57,6 +57,17 @@ textarea {
 	margin: 0 auto;
 }
 
+#imeProxy {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0; /* 完全透明 */
+    border: none;
+    background: transparent;
+    pointer-events: none; /* 讓滑鼠點擊直接穿透，絕不遮擋 Canvas */
+    z-index: -1; /* 或者放在 Canvas 後面 */
+}
+
   </style>
 	<script src="fsm.js"></script>
 	<script>
@@ -96,6 +107,7 @@ if (typeof btoa == 'undefined') {
 
 	</script>
 </head><body>
+	<input id="imeProxy" />
 	<h1>Finite State Machine Designer</h1>
 	<canvas id="canvas" width="800" height="600">
 		<span class="error">Your browser does not support<br>the HTML5 &lt;canvas&gt; element</span>
