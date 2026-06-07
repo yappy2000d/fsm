@@ -905,6 +905,7 @@ function snapNode(node) {
 
 window.addEventListener('blur', function() {
     shift = false;
+	ctrl = false;
 });
 
 window.onload = function() {
@@ -974,6 +975,7 @@ window.onload = function() {
 	canvas.onmousedown = function(e) {
 		var mouse = crossBrowserRelativeMousePos(e);
 		shift = e.shiftKey;
+		ctrl = e.ctrlKey;
 		selectedObject = selectObject(mouse.x, mouse.y);
 		movingObject = false;
 		originalClick = mouse;
@@ -1070,7 +1072,12 @@ window.onload = function() {
 		else if(movingObject) {
 			selectedObject.setAnchorPoint(mouse.x, mouse.y);
 			if(selectedObject instanceof Node) {
-				snapNode(selectedObject);
+				if(!ctrl) {
+					selectedObject.x = Math.round(selectedObject.x / gridSize) * gridSize;
+					selectedObject.y = Math.round(selectedObject.y / gridSize) * gridSize;
+				} else {
+					snapNode(selectedObject);
+				}
 			}
 			draw();
 		}
@@ -1113,12 +1120,16 @@ window.onload = function() {
 }
 
 var shift = false;
+var ctrl = false;
+var gridSize = 20;
 
 document.onkeydown = function(e) {
 	var key = crossBrowserKey(e);
 
 	if(key == 16) {
 		shift = true;
+	} else if(key == 17) {
+		ctrl = true;
 	} else if(!canvasHasFocus()) {
 		// don't read keystrokes when other things have focus
 		return true;
@@ -1167,6 +1178,8 @@ document.onkeyup = function(e) {
 
 	if(key === 16) {
 		shift = false;
+	} else if(key === 17) {
+		ctrl = false;
 	}
 	
 	if(isComposing) {
